@@ -181,11 +181,6 @@ func SignPayload(secret, allowedSerial string, payloadJson []byte) (
 		return
 	}
 
-	println("***************************************************")
-	println(csr.Serial)
-	println(allowedSerial)
-	println("***************************************************")
-
 	if csr.Serial != allowedSerial {
 		err = &errortypes.AuthenticationError{
 			errors.Wrap(err, "authority: HSM serial mismatch"),
