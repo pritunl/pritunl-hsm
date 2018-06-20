@@ -1,6 +1,7 @@
 package socket
 
 import (
+	"encoding/json"
 	"fmt"
 	"github.com/Sirupsen/logrus"
 	"github.com/dropbox/godropbox/errors"
@@ -51,7 +52,7 @@ func (s *Socket) stream() (err error) {
 					}).Error("socket: Message handle error")
 				}
 
-				msgId, sshReq, e := authority.UnmarshalPayload(
+				msgId, msgType, data, e := authority.UnmarshalPayload(
 					s.Token, s.Secret, message)
 				if e != nil {
 					logrus.WithFields(logrus.Fields{
@@ -60,7 +61,18 @@ func (s *Socket) stream() (err error) {
 					return
 				}
 
-				if sshReq != nil && sshReq.Type == "ssh_certificate" {
+				if msgType == "ssh_certificate" && data != nil {
+					sshReq := &authority.SshRequest{}
+
+					err = json.Unmarshal(data, sshReq)
+					if err != nil {
+						err = &errortypes.ParseError{
+							errors.Wrap(err,
+								"socket: Failed to unmarshal payload data"),
+						}
+						return
+					}
+
 					cert, e := authority.Sign(s.Serial, sshReq)
 					if e != nil {
 						logrus.WithFields(logrus.Fields{
@@ -69,8 +81,12 @@ func (s *Socket) stream() (err error) {
 						return
 					}
 
+					data := &authority.SshResponse{
+						Certificate: cert,
+					}
+
 					resp, e := authority.MarshalPayload(msgId, s.Token,
-						s.Secret, cert)
+						s.Secret, "ssh_certificate", data)
 					if e != nil {
 						logrus.WithFields(logrus.Fields{
 							"error": e,
@@ -86,6 +102,9 @@ func (s *Socket) stream() (err error) {
 
 	ticker := time.NewTicker(pingInterval)
 	defer ticker.Stop()
+
+	statusTicker := time.NewTicker(statusInterval)
+	defer statusTicker.Stop()
 
 	for {
 		select {
@@ -107,6 +126,15 @@ func (s *Socket) stream() (err error) {
 			if err != nil {
 				return
 			}
+		case <-statusTicker.C:
+			payload, e := authority.GetStatusPayload(
+				s.Token, s.Secret, s.Serial)
+			if e != nil {
+				err = e
+				return
+			}
+
+			queue <- payload
 		case e := <-errChan:
 			err = e
 			return
