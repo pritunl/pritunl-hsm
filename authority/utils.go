@@ -12,12 +12,14 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"github.com/dropbox/godropbox/errors"
+	"github.com/pritunl/pritunl-hsm/config"
 	"github.com/pritunl/pritunl-hsm/errortypes"
 	"github.com/pritunl/pritunl-hsm/utils"
 	"github.com/pritunl/pritunl-hsm/yubikey"
 	"golang.org/x/crypto/ssh"
 	"gopkg.in/mgo.v2/bson"
 	"hash/fnv"
+	"time"
 )
 
 func Sign(hsmSerial string, sshReq *SshRequest) (
@@ -47,8 +49,26 @@ func Sign(hsmSerial string, sshReq *SshRequest) (
 	serialHash.Write([]byte(bson.NewObjectId().Hex()))
 	cert.Serial = serialHash.Sum64()
 
-	// TODO
-	// validAfter := time.Now().Add(-5 * time.Minute).Unix()
+	maxCertExpire := config.Config.MaxCertificateExpire
+	if maxCertExpire == 0 {
+		maxCertExpire = config.DefaultMaxCertificateExpire
+	}
+
+	validAfter := uint64(time.Now().Add(-5 * time.Minute).Unix())
+	validBefore := uint64(time.Now().Add(
+		time.Duration(maxCertExpire) * time.Second).Unix())
+
+	validBefore = utils.Min(validBefore, cert.ValidBefore)
+	if validBefore <= validAfter {
+		err = &errortypes.ParseError{
+			errors.New(
+				"authority: Certificate expire out of range, check clock"),
+		}
+		return
+	}
+
+	cert.ValidAfter = validAfter
+	cert.ValidBefore = validBefore
 
 	yubikey.LockKey(sshReq.Serial)
 
