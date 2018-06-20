@@ -9,6 +9,13 @@ import (
 	"github.com/pritunl/pritunl-hsm/authority"
 	"github.com/pritunl/pritunl-hsm/errortypes"
 	"time"
+	"net/http"
+	"strconv"
+	"strings"
+	"github.com/pritunl/pritunl-hsm/utils"
+	"crypto/hmac"
+	"crypto/sha512"
+	"encoding/base64"
 )
 
 type Socket struct {
@@ -18,9 +25,45 @@ type Socket struct {
 	Host   string
 }
 
+func (s *Socket) getSig() (header http.Header, err error) {
+	header = http.Header{}
+
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
+
+	nonce, err := utils.RandStr(32)
+	if err != nil {
+		return
+	}
+
+	authString := strings.Join([]string{
+		s.Token,
+		timestamp,
+		nonce,
+		"GET",
+		"/hsm",
+	}, "&")
+
+	hashFunc := hmac.New(sha512.New, []byte(s.Secret))
+	hashFunc.Write([]byte(authString))
+	rawSignature := hashFunc.Sum(nil)
+	sig := base64.StdEncoding.EncodeToString(rawSignature)
+
+	header.Add("Auth-Token", s.Token)
+	header.Add("Auth-Signature", sig)
+	header.Add("Auth-Timestamp", timestamp)
+	header.Add("Auth-Nonce", nonce)
+
+	return
+}
+
 func (s *Socket) stream() (err error) {
+	header, err := s.getSig()
+	if err != nil {
+		return
+	}
+
 	conn, _, err := websocket.DefaultDialer.Dial(
-		fmt.Sprintf("wss://%s/hsm", s.Host), nil)
+		fmt.Sprintf("wss://%s/hsm", s.Host), header)
 	if err != nil {
 		err = &errortypes.ParseError{
 			errors.Wrap(err, "authority: Failed to connect to pritunl host"),
