@@ -18,50 +18,39 @@ import (
 	"golang.org/x/crypto/ssh"
 	"gopkg.in/mgo.v2/bson"
 	"hash/fnv"
-	"time"
 )
 
-func Sign(csr *SshCsr) (err error) {
-	yubi := yubikey.GetKey(csr.Serial)
-	if yubi == nil {
-		err = &errortypes.NotFoundError{
-			errors.Wrap(err, "authority: Failed to find hsm"),
+func Sign(hsmSerial string, sshReq *SshRequest) (
+	certMarshaled []byte, err error) {
+
+	if sshReq.Serial != hsmSerial {
+		err = &errortypes.AuthenticationError{
+			errors.Wrap(err, "authority: HSM serial mismatch"),
 		}
 		return
 	}
 
-	pubKey, comment, _, _, err := ssh.ParseAuthorizedKey(
-		[]byte(csr.Certificate.Key))
-	if err != nil {
-		err = &errortypes.ParseError{
-			errors.Wrap(err, "authority: Failed to parse ssh public key"),
+	yubi := yubikey.GetKey(sshReq.Serial)
+	if yubi == nil {
+		err = &errortypes.NotFoundError{
+			errors.New("authority: Failed to find hsm"),
 		}
+		return
+	}
+
+	cert, err := utils.UnmarshalSshCertificate(sshReq.Certificate)
+	if err != nil {
 		return
 	}
 
 	serialHash := fnv.New64a()
 	serialHash.Write([]byte(bson.NewObjectId().Hex()))
-	serial := serialHash.Sum64()
+	cert.Serial = serialHash.Sum64()
 
-	validAfter := time.Now().Add(-5 * time.Minute).Unix()
-	validBefore := time.Now().Add(
-		time.Duration(csr.Certificate.Ttl) * time.Second).Unix()
+	// TODO
+	// validAfter := time.Now().Add(-5 * time.Minute).Unix()
 
-	cert := &ssh.Certificate{
-		Key:             pubKey,
-		Serial:          serial,
-		CertType:        csr.Certificate.CertType,
-		KeyId:           csr.Certificate.KeyId,
-		ValidPrincipals: csr.Certificate.ValidPrincipals,
-		ValidAfter:      uint64(validAfter),
-		ValidBefore:     uint64(validBefore),
-		Permissions: ssh.Permissions{
-			CriticalOptions: csr.Certificate.Permissions.CriticalOptions,
-			Extensions:      csr.Certificate.Permissions.Extensions,
-		},
-	}
-
-	yubikey.LockKey(csr.Serial)
+	yubikey.LockKey(sshReq.Serial)
 
 	slot, err := yubi.Authentication()
 	if err != nil {
@@ -70,29 +59,28 @@ func Sign(csr *SshCsr) (err error) {
 
 	signer, err := ssh.NewSignerFromSigner(slot)
 	if err != nil {
-		yubikey.UnlockKey(csr.Serial)
+		yubikey.UnlockKey(sshReq.Serial)
 		return
 	}
 
 	err = cert.SignCert(rand.Reader, signer)
 	if err != nil {
-		yubikey.UnlockKey(csr.Serial)
+		yubikey.UnlockKey(sshReq.Serial)
 		return
 	}
 
-	yubikey.UnlockKey(csr.Serial)
+	yubikey.UnlockKey(sshReq.Serial)
 
-	certMarshaled := string(utils.MarshalCertificate(cert, comment))
-
-	println("***************************************************")
-	println(certMarshaled)
-	println("***************************************************")
+	certMarshaled, err = utils.MarshalSshCertificate(cert)
+	if err != nil {
+		return
+	}
 
 	return
 }
 
-func SignPayload(secret, allowedSerial string, payloadJson []byte) (
-	err error) {
+func UnmarshalPayload(token, secret string, payloadJson []byte) (
+	msgId string, sshReq *SshRequest, err error) {
 
 	payload := &HsmPayload{}
 	err = json.Unmarshal(payloadJson, payload)
@@ -103,8 +91,8 @@ func SignPayload(secret, allowedSerial string, payloadJson []byte) (
 		return
 	}
 
-	if payload.Id == "" || payload.Token == "" || payload.Iv == "" ||
-		payload.Data == "" {
+	if payload.Id == "" || payload.Token == "" || payload.Iv == nil ||
+		payload.Data == nil {
 
 		err = &errortypes.ParseError{
 			errors.Wrap(err, "authority: Invalid payload"),
@@ -112,14 +100,16 @@ func SignPayload(secret, allowedSerial string, payloadJson []byte) (
 		return
 	}
 
-	cipData, err := base64.StdEncoding.DecodeString(payload.Data)
-	if err != nil {
-		err = &errortypes.ParseError{
-			errors.Wrap(err, "authority: Failed to decode payload data"),
+	if subtle.ConstantTimeCompare([]byte(token),
+		[]byte(payload.Token)) != 1 {
+
+		err = &errortypes.AuthenticationError{
+			errors.Wrap(err, "authority: Invalid token"),
 		}
 		return
 	}
 
+	cipData := payload.Data
 	hashFunc := hmac.New(sha512.New, []byte(secret))
 	hashFunc.Write(cipData)
 	rawSignature := hashFunc.Sum(nil)
@@ -137,14 +127,7 @@ func SignPayload(secret, allowedSerial string, payloadJson []byte) (
 	encKeyHash := sha256.New()
 	encKeyHash.Write([]byte(secret))
 	cipKey := encKeyHash.Sum(nil)
-
-	cipIv, err := base64.StdEncoding.DecodeString(payload.Iv)
-	if err != nil {
-		err = &errortypes.ParseError{
-			errors.Wrap(err, "authority: Failed to decode payload iv"),
-		}
-		return
-	}
+	cipIv := payload.Iv
 
 	if len(cipIv) != aes.BlockSize {
 		err = &errortypes.ParseError{
@@ -153,7 +136,7 @@ func SignPayload(secret, allowedSerial string, payloadJson []byte) (
 		return
 	}
 
-	if len(cipData)%16 != 0 {
+	if len(cipData) == 0 || len(cipData)%16 != 0 {
 		err = &errortypes.ParseError{
 			errors.Wrap(err, "authority: Invalid payload data length"),
 		}
@@ -172,8 +155,10 @@ func SignPayload(secret, allowedSerial string, payloadJson []byte) (
 	mode.CryptBlocks(cipData, cipData)
 	cipData = bytes.TrimRight(cipData, "\x00")
 
-	csr := &SshCsr{}
-	err = json.Unmarshal(cipData, csr)
+	msgId = payload.Id
+	sshReq = &SshRequest{}
+
+	err = json.Unmarshal(cipData, sshReq)
 	if err != nil {
 		err = &errortypes.ParseError{
 			errors.Wrap(err, "authority: Failed to unmarshal payload data"),
@@ -181,16 +166,61 @@ func SignPayload(secret, allowedSerial string, payloadJson []byte) (
 		return
 	}
 
-	if csr.Serial != allowedSerial {
-		err = &errortypes.AuthenticationError{
-			errors.Wrap(err, "authority: HSM serial mismatch"),
+	return
+}
+
+func MarshalPayload(id, token, secret string, cert []byte) (
+	payload *HsmPayload, err error) {
+
+	data := &SshResponse{
+		Type:        "ssh_certificate",
+		Certificate: cert,
+	}
+
+	cipData, err := json.Marshal(data)
+	if err != nil {
+		err = &errortypes.ParseError{
+			errors.Wrap(err, "authority: Failed to marshal certificate"),
 		}
 		return
 	}
 
-	err = Sign(csr)
+	pad := 16 - len(cipData)%16
+	for i := 0; i < pad; i++ {
+		cipData = append(cipData, 0)
+	}
+
+	encKeyHash := sha256.New()
+	encKeyHash.Write([]byte(secret))
+	cipKey := encKeyHash.Sum(nil)
+
+	cipIv, err := utils.RandBytes(aes.BlockSize)
 	if err != nil {
 		return
+	}
+
+	block, err := aes.NewCipher(cipKey)
+	if err != nil {
+		err = &errortypes.ParseError{
+			errors.Wrap(err, "authority: Failed to load cipher"),
+		}
+		return
+	}
+
+	mode := cipher.NewCBCEncrypter(block, cipIv)
+	mode.CryptBlocks(cipData, cipData)
+
+	hashFunc := hmac.New(sha512.New, []byte(secret))
+	hashFunc.Write(cipData)
+	rawSignature := hashFunc.Sum(nil)
+	sig := base64.StdEncoding.EncodeToString(rawSignature)
+
+	payload = &HsmPayload{
+		Id:        id,
+		Token:     token,
+		Iv:        cipIv,
+		Signature: sig,
+		Data:      cipData,
 	}
 
 	return
