@@ -44,12 +44,43 @@ func (s *Socket) stream() (err error) {
 				return
 			}
 
-			e = authority.SignPayload(s.Secret, s.Serial, message)
-			if e != nil {
-				logrus.WithFields(logrus.Fields{
-					"error": e,
-				}).Error("socket: Sign payload error")
-			}
+			go func() {
+				if r := recover(); r != nil {
+					logrus.WithFields(logrus.Fields{
+						"error": errors.New(fmt.Sprintf("%s", r)),
+					}).Error("socket: Message handle error")
+				}
+
+				msgId, sshReq, e := authority.UnmarshalPayload(
+					s.Token, s.Secret, message)
+				if e != nil {
+					logrus.WithFields(logrus.Fields{
+						"error": e,
+					}).Error("socket: Unmarshal payload error")
+					return
+				}
+
+				if sshReq != nil && sshReq.Type == "ssh_certificate" {
+					cert, e := authority.Sign(s.Serial, sshReq)
+					if e != nil {
+						logrus.WithFields(logrus.Fields{
+							"error": e,
+						}).Error("socket: Sign payload error")
+						return
+					}
+
+					resp, e := authority.MarshalPayload(msgId, s.Token,
+						s.Secret, cert)
+					if e != nil {
+						logrus.WithFields(logrus.Fields{
+							"error": e,
+						}).Error("socket: Marshal payload error")
+						return
+					}
+
+					queue <- resp
+				}
+			}()
 		}
 	}()
 
@@ -58,24 +89,27 @@ func (s *Socket) stream() (err error) {
 
 	for {
 		select {
-		//case msg, ok := <-sub:
-		//	if !ok {
-		//		conn.WriteControl(websocket.CloseMessage, []byte{},
-		//			time.Now().Add(writeTimeout))
-		//		return
-		//	}
-		//
-		//	conn.SetWriteDeadline(time.Now().Add(writeTimeout))
-		//	err = conn.WriteJSON(msg)
-		//	if err != nil {
-		//		return
-		//	}
+		case msg, ok := <-queue:
+			if !ok {
+				conn.WriteControl(websocket.CloseMessage, []byte{},
+					time.Now().Add(writeTimeout))
+				return
+			}
+
+			conn.SetWriteDeadline(time.Now().Add(writeTimeout))
+			err = conn.WriteJSON(msg)
+			if err != nil {
+				return
+			}
 		case <-ticker.C:
 			err = conn.WriteControl(websocket.PingMessage, []byte{},
 				time.Now().Add(writeTimeout))
 			if err != nil {
 				return
 			}
+		case e := <-errChan:
+			err = e
+			return
 		}
 	}
 }
