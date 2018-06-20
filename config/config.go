@@ -8,6 +8,10 @@ import (
 	"io/ioutil"
 )
 
+const (
+	DefaultMaxCertificateExpire = 28800
+)
+
 var (
 	Config            = &ConfigData{}
 	StaticRoot        = ""
@@ -15,9 +19,10 @@ var (
 )
 
 type ConfigData struct {
-	path            string   `json:"-"`
-	loaded          bool     `json:"-"`
-	PritunlZeroHosts []string `json:"pritunl_zero_hosts"`
+	path                 string   `json:"-"`
+	loaded               bool     `json:"-"`
+	MaxCertificateExpire int      `json:"max_certificate_expire"`
+	PritunlZeroHosts     []string `json:"pritunl_zero_hosts"`
 }
 
 func (c *ConfigData) Save() (err error) {
