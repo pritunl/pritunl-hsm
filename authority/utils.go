@@ -100,7 +100,7 @@ func Sign(hsmSerial string, sshReq *SshRequest) (
 }
 
 func UnmarshalPayload(token, secret string, payloadJson []byte) (
-	msgId string, sshReq *SshRequest, err error) {
+	payloadId, payloadType string, data []byte, err error) {
 
 	payload := &HsmPayload{}
 	err = json.Unmarshal(payloadJson, payload)
@@ -175,32 +175,20 @@ func UnmarshalPayload(token, secret string, payloadJson []byte) (
 	mode.CryptBlocks(cipData, cipData)
 	cipData = bytes.TrimRight(cipData, "\x00")
 
-	msgId = payload.Id
-	sshReq = &SshRequest{}
-
-	err = json.Unmarshal(cipData, sshReq)
-	if err != nil {
-		err = &errortypes.ParseError{
-			errors.Wrap(err, "authority: Failed to unmarshal payload data"),
-		}
-		return
-	}
+	payloadId = payload.Id
+	payloadType = payload.Type
+	data = cipData
 
 	return
 }
 
-func MarshalPayload(id, token, secret string, cert []byte) (
+func MarshalPayload(id, token, secret, typ string, data interface{}) (
 	payload *HsmPayload, err error) {
-
-	data := &SshResponse{
-		Type:        "ssh_certificate",
-		Certificate: cert,
-	}
 
 	cipData, err := json.Marshal(data)
 	if err != nil {
 		err = &errortypes.ParseError{
-			errors.Wrap(err, "authority: Failed to marshal certificate"),
+			errors.Wrap(err, "authority: Failed to marshal payload"),
 		}
 		return
 	}
@@ -240,7 +228,25 @@ func MarshalPayload(id, token, secret string, cert []byte) (
 		Token:     token,
 		Iv:        cipIv,
 		Signature: sig,
+		Type:      typ,
 		Data:      cipData,
+	}
+
+	return
+}
+
+func GetStatusPayload(token, secret, serial string) (
+	payload *HsmPayload, err error) {
+
+	data := &HsmStatus{
+		Status:       "online",
+		SshPublicKey: yubikey.GetPublicKey(serial),
+	}
+
+	payload, err = MarshalPayload(
+		bson.NewObjectId().Hex(), token, secret, "status", data)
+	if err != nil {
+		return
 	}
 
 	return
