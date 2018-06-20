@@ -26,6 +26,8 @@ func main() {
 		panic(err)
 	}
 
+	logrus.Info("main: Starting sockets")
+
 	err = socket.Init()
 	if err != nil {
 		panic(err)
