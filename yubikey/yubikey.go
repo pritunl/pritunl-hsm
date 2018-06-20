@@ -10,14 +10,22 @@ import (
 
 var (
 	keys     = map[string]*ykpiv.Yubikey{}
+	pubKeys  = map[string]string{}
 	keysLock = utils.NewMultiLock()
 )
 
 func GetKey(serial string) (key *ykpiv.Yubikey) {
 	// TODO
-	// slot = slots[serial]
-
 	for _, key = range keys {
+		return
+	}
+
+	return
+}
+
+func GetPublicKey(serial string) (pubKey string) {
+	// TODO
+	for _, pubKey = range pubKeys {
 		return
 	}
 
@@ -34,6 +42,7 @@ func UnlockKey(serial string) {
 
 func Init() (err error) {
 	ks := map[string]*ykpiv.Yubikey{}
+	pks := map[string]string{}
 
 	// TODO
 	pin := "123456"
@@ -64,13 +73,8 @@ func Init() (err error) {
 		return
 	}
 
-	encodedPub := string(utils.MarshalPublicKey(pubKey))
-
-	println("***************************************************")
-	println(encodedPub)
-	println("***************************************************")
-
 	ks["todo"] = yubikey
+	pks["todo"] = string(utils.MarshalPublicKey(pubKey))
 
 	keys = ks
 
