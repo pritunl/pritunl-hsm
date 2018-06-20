@@ -28,6 +28,11 @@ func (s *Socket) stream() (err error) {
 	}
 	defer conn.Close()
 
+	queue := make(chan *authority.HsmPayload, 50)
+	defer close(queue)
+
+	errChan := make(chan error, 1)
+
 	go func() {
 		defer func() {
 			recover()
@@ -35,11 +40,8 @@ func (s *Socket) stream() (err error) {
 		for {
 			_, message, e := conn.ReadMessage()
 			if e != nil {
-				logrus.WithFields(logrus.Fields{
-					"error": e,
-				}).Error("socket: Socket listen error")
-				conn.Close()
-				break
+				errChan <- e
+				return
 			}
 
 			e = authority.SignPayload(s.Secret, s.Serial, message)
