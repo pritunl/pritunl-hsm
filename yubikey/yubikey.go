@@ -77,6 +77,7 @@ func Init() (err error) {
 	pks["todo"] = string(utils.MarshalPublicKey(pubKey))
 
 	keys = ks
+	pubKeys = pks
 
 	return
 }
