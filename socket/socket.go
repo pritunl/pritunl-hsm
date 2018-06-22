@@ -198,6 +198,6 @@ func (s *Socket) Run() {
 			}).Error("socket: Socket stream error")
 		}
 
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(1 * time.Second)
 	}
 }
