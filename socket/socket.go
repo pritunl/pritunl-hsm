@@ -72,6 +72,10 @@ func (s *Socket) stream() (err error) {
 	}
 	defer conn.Close()
 
+	logrus.WithFields(logrus.Fields{
+		"host": s.Host,
+	}).Info("socket: Connected to Pritunl Zero host")
+
 	queue := make(chan *authority.HsmPayload, 50)
 	defer close(queue)
 
