@@ -54,7 +54,7 @@ func Sign(hsmSerial string, sshReq *SshRequest) (
 		maxCertExpire = config.DefaultMaxCertificateExpire
 	}
 
-	validAfter := uint64(time.Now().Add(-5 * time.Minute).Unix())
+	validAfter := uint64(time.Now().Add(-3 * time.Minute).Unix())
 	validBefore := uint64(time.Now().Add(
 		time.Duration(maxCertExpire) * time.Second).Unix())
 
