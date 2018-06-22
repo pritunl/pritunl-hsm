@@ -1,6 +1,9 @@
 package socket
 
 import (
+	"crypto/hmac"
+	"crypto/sha512"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"github.com/Sirupsen/logrus"
@@ -8,14 +11,11 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/pritunl/pritunl-hsm/authority"
 	"github.com/pritunl/pritunl-hsm/errortypes"
-	"time"
+	"github.com/pritunl/pritunl-hsm/utils"
 	"net/http"
 	"strconv"
 	"strings"
-	"github.com/pritunl/pritunl-hsm/utils"
-	"crypto/hmac"
-	"crypto/sha512"
-	"encoding/base64"
+	"time"
 )
 
 type Socket struct {
