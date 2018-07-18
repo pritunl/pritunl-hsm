@@ -51,7 +51,7 @@ Debian
 
 ```
 sudo apt install build-essential libykpiv-dev
-go get github.com/pritunl/pritunl-hsm/ykpiv
+go get pault.ag/go/ykpiv
 ```
 
 MacOS X
@@ -59,7 +59,7 @@ MacOS X
 
 ```
 brew install yubico-piv-tool
-go get github.com/pritunl/pritunl-hsm/ykpiv
+go get pault.ag/go/ykpiv
 ```
 
 Examples
